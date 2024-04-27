@@ -3,25 +3,49 @@ from ecdsa.curves import SECP256k1
 import random
 import hashlib
 import math
-from sympy import mod_inverse
-
-c1_point = None
+from ecdsa.numbertheory import inverse_mod
+from ecdsa import ellipticcurve, numbertheory
 
 class EncryptedCommunication:
     def __init__(self):
         self.curve = SECP256k1
         self.Q = int(self.curve.order)
-        self.G = self.curve.generator
-        self.id = 1234
-        self.idb = 4321
-        self.x = None
-        self.y = None
-        self.xP = None
-        self.yP = None
-        self.bx = None
-        self.by = None
-        self.bxP = None
-        self.byP = None
+        self.P = self.curve.generator
+        
+        self.id_a = 1234
+        self.a_x = None
+        self.a_y = None
+        self.a_xP = None
+        self.a_yP = None
+
+        self.id_b = 4321
+        self.b_x = None
+        self.b_y = None
+        self.b_xP = None
+        self.b_yP = None
+
+        self.c = None
+        self.l_bits = None
+        self.n_bits = None
+
+    def hash1(self, message, sigma, idA, pkA1, pkA2):
+        mega_string = str(message) + str(sigma) + str(idA) + str(pkA1) + str(pkA2)
+        return int(int(hashlib.sha256(mega_string.encode()).hexdigest(), 16) % self.Q)
+    
+    def hash2(self, n, seed_value):
+        hash_value = hash((n, seed_value))
+        result = hash_value & ((1 << n) - 1)
+        if result < (1 << (n - 1)):
+            result += (1 << (n - 1))
+        return bin(result)[2:]
+
+    def hash3(self, c1, c2, c3, c4):
+        mega_string = str(c1) + str(c2) + str(c3) + str(c4)
+        return int(int(hashlib.sha256(mega_string.encode()).hexdigest(), 16) % self.Q)
+
+    def hash4(self, idA, idB, pkB1x, pkB1y):
+        mega_string = str(idA) + str(idB) + str(pkB1x) + str(pkB1y)
+        return int(hashlib.sha256(mega_string.encode()).hexdigest(), 16) % self.Q
 
     def message_to_binary(self, message):
         utf8_bytes = message.encode('utf-8')
@@ -29,164 +53,183 @@ class EncryptedCommunication:
         return binary_string
     
     def hex_to_ascii(self, hex_string):
-        if hex_string.startswith('0x'):
+        if hex_string.startswith('0x'):         # Drop the 0x prefix
             hex_string = hex_string[2:]
         ascii_str = ''
-        for i in range(0, len(hex_string), 2):
+        for i in range(0, len(hex_string), 2):  # Convert to ASCII
             hex_pair = hex_string[i:i+2]
             char_code = int(hex_pair, 16)
             ascii_str += chr(char_code)
         return ascii_str
 
     def key_generate(self):
-        self.x = random.randint(0, self.Q-1)
-        self.y = random.randint(0, self.Q-1)
-        self.xP = self.x * self.G
-        self.yP = self.y * self.G
-        self.bx = random.randint(0, self.Q-1)
-        self.by = random.randint(0, self.Q-1)
-        self.bxP = self.bx * self.G
-        self.byP = self.by * self.G
+        # Person A (Content Owner)
+        self.a_x = random.randint(0, self.Q-1)
+        self.a_y = random.randint(0, self.Q-1)
+        self.a_xP = self.a_x * self.P
+        self.a_yP = self.a_y * self.P
 
-    def encrypt(self, m):
-        # Outside of smart contract, use points as integers and then on smart contract use elliptic curves
-        
-        # Solidity: Use random values for c1 to c4, and for rk1 to rk3,
-        #     1  do normal multiplication
-        #     2  convert c1 to c4, and scalar multiply with rk1 to rk3
-        
-        global c1_point
-        x_inverse = mod_inverse(self.x, self.Q)
-        c = random.randint(0, self.Q-1)
+        # Person B (User)
+        self.b_x = random.randint(0, self.Q-1)
+        self.b_y = random.randint(0, self.Q-1)
+        self.b_xP = self.b_x * self.P
+        self.b_yP = self.b_y * self.P
+
+        # Ephemeral Randomness
+        self.c = random.randint(0, self.Q-1)
+
+        # Sigma Length (hard coded to 256 for this example)
+        self.l_bits = 256
+
+    def encrypt(self, message):
+        # Compute C1 = r * p
         sigma = random.randint(0, self.Q-1)
-        l_bits = math.ceil(math.log2(sigma+1))
+        r = self.hash1(message, sigma, self.id_a, self.a_xP.x(), self.a_yP.x()) 
+        c1 = r * self.P
+        
+        # Compute C2 = skA^-1 * c * r * (pkA1 + pkA2) * P = skA^-1 * fQa
+        f = self.c * r
+        Qa = (self.a_xP.x() + self.a_yP.x()) * self.P
+        fQa = f * Qa
+        c2 = inverse_mod(self.a_x, self.Q) * fQa
+        
+        # Convert the message into binary
+        message_in_binary = self.message_to_binary(message)
+        self.n_bits = len(message_in_binary)
+
+        # Convert sigma into binary
+        sigma_in_binary = bin(sigma)[2:].zfill(self.l_bits)
+        
+        # Concatenate the message and sigma
+        message_plus_sigma = message_in_binary + sigma_in_binary
+        
+        # Compute H2(fQa)
+        hashed_fQa = self.hash2(self.l_bits + self.n_bits, fQa.x())
+        
+        # C3 = (message || sigma) ^ H2(fQa)
+        c3 = ''.join(str(int(a) ^ int(b)) for a, b in zip(message_plus_sigma, hashed_fQa))
+        
+        # C4 = t * P
         t = random.randint(0, self.Q-1)
+        c4 = t * self.P
 
-        mega_string = m + str(sigma) + str(self.id) + str(self.xP) + str(self.yP)
-        # Modulo the string, not hash
-        r = int(int(hashlib.sha256(mega_string.encode()).hexdigest(), 16) % self.Q) 
-        f = (c * r) #% self.Q        % Q not necessary
-        c1_point = r * self.G
-        c1 = c1_point.x() 
-        #Qa = ((self.G.x()% self.Q) * ((self.xP.x() % self.Q) + (self.yP.x() % self.Q))) % self.Q # not necessaru
-        Qa = ((self.G.x()) * ((self.xP.x()) + (self.yP.x()))) 
-        #c2 = (f * Qa * (x_inverse % self.Q)) % self.Q
-        c2 = (f * Qa * x_inverse)
+        # C5 = t + c * r * (pkA1 + pkA2) * skA^-1
+        hash3 = self.hash3(c1.x(), c2.x(), c3, c4.x())
+        c5 = t + self.c * r * (self.a_xP.x() + self.a_yP.x()) * inverse_mod(self.a_x, self.Q) * hash3
 
-        binary_message = self.message_to_binary(m)
-        sigma_binary = bin(sigma)[2:]
-        concat = binary_message + sigma_binary
-        fQa = (f * Qa) % self.Q
+        return c1, c2, c3, c4, c5
 
-        hashed_fQa = hashlib.sha256(str(fQa).encode()).digest()
-        hashed_fQa_int = int.from_bytes(hashed_fQa, byteorder='big')
-        hashed_fQa_mod_Q = hashed_fQa_int % self.Q
-        binary_hashed_fQa = bin(hashed_fQa_mod_Q)[2:].zfill(self.Q.bit_length())
+    def decrypt(self, c1, c2, c3, c4, c5):
+        # Compute points for Decryption check
+        c5p = c5 * self.P
+        hash3 = self.hash3(c1.x(), c2.x(), c3, c4.x())
+        verification_point = c4 + (hash3 * c2)
+            
+        # C5 * P must equal C4 + H3(C1, C2, C3, C4) * C2
+        if c5p.x() != verification_point.x():
+            print("Decrypt Check 1 failed!")
+            exit(0)
         
-        max_length = max(len(concat), len(binary_hashed_fQa))
-        concat_padded = concat.ljust(max_length, '0')
-        binary_hashed_fQa_padded = binary_hashed_fQa.ljust(max_length, '0')
-        #print("test", binary_hashed_fQa_padded)
+        # Compute H2(fQa)
+        hash_input = self.a_x * c2
+        hash2 = self.hash2(self.l_bits + self.n_bits, hash_input.x())
         
-        result_binary = ''.join(str(int(a) ^ int(b)) for a, b in zip(concat_padded, binary_hashed_fQa_padded))
+        # (message || sigma) = C3prime ^ hash2
+        message_plus_sigma = ''.join(str(int(a) ^ int(b)) for a, b in zip(c3, hash2))
         
-        c3 = result_binary
+        # Extract the message
+        message_in_binary = message_plus_sigma[:-self.l_bits]
+        message = self.hex_to_ascii(hex(int(message_in_binary, 2)))
         
-        c4_point = t * self.G
-        c4 = c4_point.x()
-        
-        mega_string2 = str(c1) + str(c2) + str(int(c3, 2)) + str(c4)
-        hash3 = int(hashlib.sha256(mega_string2.encode()).hexdigest(), 16) 
-        #c5 = (t % self.Q) + ((c % self.Q) * (r % self.Q) * (int(self.xP.x() % self.Q) + int(self.yP.x() % self.Q)) * (x_inverse % self.Q) * (hash3% self.Q)) 
-        # Point addition
-        c5 = (t) + ((c) * (r) * (int(self.xP.x() ) + int(self.yP.x() )) * (x_inverse) * (hash3% self.Q)) 
+        # Extract sigma
+        sigma_in_binary = message_plus_sigma[-self.l_bits:]
 
-        return c1, c2, c3, c4, c5, l_bits, result_binary, c
+        # Compute point for Decryption check
+        r = self.hash1(message, int(sigma_in_binary, 2), self.id_a, self.a_xP.x(), self.a_yP.x())
+        addedPoints = self.a_xP.x() + self.a_yP.x()
+        Qa = addedPoints * self.P 
+        verification_point_2 = inverse_mod(self.a_x, self.Q) * self.c * r * Qa
+        
+        # C2 must equal skA^-1 * c * r * (pkA1 + pkA2) * P
+        if (c2.x() != verification_point_2.x()):
+            print("Decrypt Check 2 failed!")
+            exit(0)
+        
+        return message
 
-    def decrypt(self, c1, c2, c3, c4, c5, l_bits, result_binary):
-        # Check for valid ciphertext still has to be implemented.
-        c5_times_p = c5 * self.G
-        c5p = c5_times_p.x() % self.Q
+    def rekeygenerate(self): 
+        s = self.hash4(self.id_a, self.id_b, self.b_xP.x(), self.b_yP.x())
+        s_inverse = inverse_mod(s, self.Q)
         
-        mega_string2 = str(c1) + str(c2) + str(int(c3, 2)) + str(c4)
-        hash3 = int(hashlib.sha256(mega_string2.encode()).hexdigest(), 16)
-        #hash3 = ((hash3%self.Q * c2%self.Q) + c4%self.Q) % self.Q
-        hash3 = (((hash3%self.Q) * c2) + c4) % self.Q
-        
-        print("c5p", c5p)
-        print("hash", hash3)
-        if c5p == hash3:
-            print("same")
-        else:
-            print("not same")
-        
-        temp = ((self.x * c2) % self.Q)
-        hashed_temp = hashlib.sha256(str(temp).encode()).digest()
-        binhashfQa = ''.join(format(byte, '08b') for byte in hashed_temp)
-        
-        max_length = max(len(result_binary), len(binhashfQa))
+        # Compute re-encryption keys
+        rk1 = s_inverse * self.c * self.a_xP.x()
+        rk2 = s_inverse * self.c * self.a_yP.x()
+        rk3 = s_inverse * (self.a_xP.x() + self.a_yP.x())
 
-        result_binary_padded = result_binary.ljust(max_length, '0')
-        binhashfQa_padded = binhashfQa.ljust(max_length, '0')
-        
-        result = ''.join(str(int(a) ^ int(b)) for a, b in zip(result_binary_padded, binhashfQa_padded))
-        print("Decryption Result:", result)
-        result = result[:-l_bits]
-        print("Decryption Result:", result)
-        # Second check to see if ciphertext is valid still has to be added
-
-        return self.hex_to_ascii(hex(int(result, 2)))
-
-    def rekeygenerate(self, c):
-        mega_string = str(self.id) + str(self.idb) + str(self.bxP.x()) + str(self.byP.x())
-        s = int(hashlib.sha256(mega_string.encode()).hexdigest(), 16) % self.Q
-        s_inverse = mod_inverse(s, self.Q)
-        rk1 = (s_inverse * c * self.bxP.x()) % self.Q
-        rk2 = (s_inverse * c * self.byP.x()) % self.Q
-        rk3 = (s_inverse * (self.bxP.x() + self.bxP.y())) % self.Q
-        
         return rk1, rk2, rk3
         
     def reencrypt(self, rk1, rk2, rk3, c1, c2, c3, c4, c5):
-        C1prime = (rk1 * c1) #% self.Q
-        C2prime = (rk2 * c1) #% self.Q
+        # Compute points for Re-Encryption check
+        c5p = c5 * self.P
+        hash3 = self.hash3(c1.x(), c2.x(), c3, c4.x())
+        verification_point = c4 + (hash3 * c2)
+
+        # C5 * P must equal C4 + H3(C1, C2, C3, C4) * C2
+        if c5p.x() != verification_point.x():
+            print("Re-Encrypt Check 1 failed!")
+            exit(0)
+
+        # Compute re-encrypted ciphertexts
+        C1prime = c1 * rk1
+        C2prime = c1 * rk2
         C3prime = c3
-        C4prime = (rk3 * c1) #% self.Q
+        C4prime = c1 * rk3
+       
         return C1prime, C2prime, C3prime, C4prime
     
-    def redecrypt(self, C1prime, C2prime, C3prime, C4prime, l_bits):
-        skPr = self.bx * self.G
-        skP = skPr.x() % self.Q
-        mega_string = str(self.id) + str(self.idb) + str(self.bxP.x()) + str(self.byP.x())
-        s_prime = int(hashlib.sha256(mega_string.encode()).hexdigest(), 16) % self.Q
-        sum = (C1prime + C2prime) % self.Q
-        sum = (s_prime * sum) % self.Q
-        mega_string_2 = str(sum)
+    def redecrypt(self, C1prime, C2prime, C3prime, C4prime):        
+        # Manually compute public key points
+        skPrX = self.b_x * self.P
+        skPrY = self.b_y * self.P
+
+        # Hash the 2 IDs and both public keys
+        s_prime = self.hash4(self.id_a, self.id_b, skPrX.x(), skPrY.x())
+
+        # Compute H2(s'(C1' + C2')) == H2(fQa)
+        hash2_input = s_prime * (C1prime + C2prime)
+        hash2 = self.hash2(self.l_bits + self.n_bits, hash2_input.x())
         
-        hash2 = hashlib.sha256(mega_string_2.encode()).digest()
-        binhash2 = ''.join(format(byte, '08b') for byte in hash2)
+        # (message || sigma) = C3prime ^ hash2
+        message_plus_sigma = ''.join(str(int(a) ^ int(b)) for a, b in zip(hash2, C3prime))
         
-        max_length = max(len(binhash2), len(C3prime))
+        # Extract the message
+        message_in_binary = message_plus_sigma[:-self.l_bits]
+        message = self.hex_to_ascii(hex(int(message_in_binary, 2)))
+
+        # Extract sigma
+        sigma_in_binary = message_plus_sigma[-self.l_bits:]
         
-        hash2padded = binhash2.ljust(max_length, '0')
-        C3primepadd = C3prime.ljust(max_length, '0')
+        # Compute point for Re-Decryption check
+        r = self.hash1(message, int(sigma_in_binary, 2), self.id_a, self.a_xP.x(), self.a_yP.x()) 
+        verification_scalar = r * inverse_mod(s_prime, self.Q) * (self.a_xP.x() + self.a_yP.x())
+        verification_point = verification_scalar * self.P
         
-        result = ''.join(str(int(a) ^ int(b)) for a, b in zip(hash2padded, C3primepadd))
-        print("Re-Decryption Result:", result)
-        result = result[:-l_bits]
-        print("Re-Decryption Result:", result)
-        
-        return self.hex_to_ascii(hex(int(result, 2)))
+        # C4' must equal (s')^-1 * r * (pkA1 + pkA2) * P
+        if C4prime.x() != verification_point.x() :
+            print("Re-Decrypt Check failed!")
+            exit(0)
+
+        return message
     
 def main():
     ec = EncryptedCommunication()
     message = input("Enter a message to encrypt: ")
     ec.key_generate()
-    c1, c2, c3, c4, c5, l_bits, result_binary, c = ec.encrypt(message)
-    print("Decrypted Message:", ec.decrypt(c1, c2, c3, c4, c5, l_bits, result_binary))
-    rk1, rk2, rk3 = ec.rekeygenerate(c)
+    c1, c2, c3, c4, c5 = ec.encrypt(message)
+    print("Decrypted Message:", ec.decrypt(c1, c2, c3, c4, c5))
+    rk1, rk2, rk3 = ec.rekeygenerate()
     C1prime, C2prime, C3prime, C4prime = ec.reencrypt(rk1, rk2, rk3, c1, c2, c3, c4, c5)
-    print("Re-Decrypted Message:", ec.redecrypt(C1prime, C2prime, C3prime, C4prime, l_bits))
-    
+    print("Re-Decrypted Message:", ec.redecrypt(C1prime, C2prime, C3prime, C4prime))
+   
 if __name__ == "__main__":
     main()
