@@ -5,6 +5,7 @@ import hashlib
 import math
 from ecdsa.numbertheory import inverse_mod
 from ecdsa import ellipticcurve, numbertheory
+from eth_hash.auto import keccak
 
 class EncryptedCommunication:
     def __init__(self):
@@ -30,7 +31,9 @@ class EncryptedCommunication:
 
     def hash1(self, message, sigma, idA, pkA1, pkA2):
         mega_string = str(message) + str(sigma) + str(idA) + str(pkA1) + str(pkA2)
-        return int(int(hashlib.sha256(mega_string.encode()).hexdigest(), 16) % self.Q)
+        #return int(int(hashlib.sha256(mega_string.encode()).hexdigest(), 16) % self.Q)
+        hash_bytes = keccak(mega_string.encode())
+        return int.from_bytes(hash_bytes, byteorder='big') % self.Q
     
     def hash2(self, n, seed_value):
         hash_value = hash((n, seed_value))
@@ -41,11 +44,15 @@ class EncryptedCommunication:
 
     def hash3(self, c1, c2, c3, c4):
         mega_string = str(c1) + str(c2) + str(c3) + str(c4)
-        return int(int(hashlib.sha256(mega_string.encode()).hexdigest(), 16) % self.Q)
+        #return int(int(hashlib.sha256(mega_string.encode()).hexdigest(), 16) % self.Q)
+        hash_bytes = keccak(mega_string.encode())
+        return int.from_bytes(hash_bytes, byteorder='big') % self.Q
 
     def hash4(self, idA, idB, pkB1x, pkB1y):
         mega_string = str(idA) + str(idB) + str(pkB1x) + str(pkB1y)
-        return int(hashlib.sha256(mega_string.encode()).hexdigest(), 16) % self.Q
+        #return int(hashlib.sha256(mega_string.encode()).hexdigest(), 16) % self.Q
+        hash_bytes = keccak(mega_string.encode())
+        return int.from_bytes(hash_bytes, byteorder='big') % self.Q
 
     def message_to_binary(self, message):
         utf8_bytes = message.encode('utf-8')
@@ -79,11 +86,12 @@ class EncryptedCommunication:
         self.c = random.randint(0, self.Q-1)
 
         # Sigma Length (hard coded to 256 for this example)
-        self.l_bits = 256
+        self.l_bits = 128
 
     def encrypt(self, message):
         # Compute C1 = r * p
-        sigma = random.randint(0, self.Q-1)
+        #sigma = random.randint(0, self.Q-1)
+        sigma = random.randint(0, 2 ** 128)
         r = self.hash1(message, sigma, self.id_a, self.a_xP.x(), self.a_yP.x()) 
         c1 = r * self.P
         
@@ -162,10 +170,10 @@ class EncryptedCommunication:
         s_inverse = inverse_mod(s, self.Q)
         
         # Compute re-encryption keys
-        rk1 = s_inverse * self.c * self.a_xP.x()
-        rk2 = s_inverse * self.c * self.a_yP.x()
-        rk3 = s_inverse * (self.a_xP.x() + self.a_yP.x())
-
+        rk1 = s_inverse * self.c * self.a_xP.x() % self.Q
+        rk2 = s_inverse * self.c * self.a_yP.x() % self.Q
+        rk3 = s_inverse * (self.a_xP.x() + self.a_yP.x()) % self.Q
+        
         return rk1, rk2, rk3
         
     def reencrypt(self, rk1, rk2, rk3, c1, c2, c3, c4, c5):
@@ -173,7 +181,7 @@ class EncryptedCommunication:
         c5p = c5 * self.P
         hash3 = self.hash3(c1.x(), c2.x(), c3, c4.x())
         verification_point = c4 + (hash3 * c2)
-
+        print("C5P:", c5p.x())
         # C5 * P must equal C4 + H3(C1, C2, C3, C4) * C2
         if c5p.x() != verification_point.x():
             print("Re-Encrypt Check 1 failed!")
@@ -228,7 +236,24 @@ def main():
     c1, c2, c3, c4, c5 = ec.encrypt(message)
     print("Decrypted Message:", ec.decrypt(c1, c2, c3, c4, c5))
     rk1, rk2, rk3 = ec.rekeygenerate()
+
+    print("C1:", c1.x())
+    print("C2:", c2.x())
+    print("C3:", c3)
+    print("C4:", c4.x())
+    print("C5:", hex(c5))
+
+    print("RK1:", rk1)
+    print("RK2:", rk2)
+    print("RK3:", rk3)
+
     C1prime, C2prime, C3prime, C4prime = ec.reencrypt(rk1, rk2, rk3, c1, c2, c3, c4, c5)
+
+    print("C1':", C1prime.x())
+    print("C2':", C2prime.x())
+    print("C3':", C3prime)
+    print("C4':", C4prime.x())
+
     print("Re-Decrypted Message:", ec.redecrypt(C1prime, C2prime, C3prime, C4prime))
    
 if __name__ == "__main__":
