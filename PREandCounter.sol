@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
+pragma solidity 0.8.22;
 
 import "contracts/EllipticCurve.sol";
 
@@ -12,6 +12,7 @@ contract PRE
     uint256 public constant BB = 7;
     uint256 public constant PP = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F;
     uint256 public constant NN = 0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141;
+    uint8   public constant p = 0x02; 
 
     // Ciphertext values
     uint private c1;
@@ -25,7 +26,7 @@ contract PRE
     Counter public countingContract;
 
     // Constructor to initialize contract
-    constructor(uint _c1, uint _c2, bytes memory _c3, uint _c4, bytes memory _c5, address[] memory _allowedAddresses)
+    constructor(uint _c1, uint _c2, bytes memory _c3, uint _c4, bytes memory _c5, bytes32[] memory _allowedAddresses)
     {
         c1 = _c1;
         c2 = _c2;
@@ -39,12 +40,11 @@ contract PRE
     // Function to re-encrypt the ciphertext with the re-encryption keys
     function ReEncrypt(uint256 _rk1, uint256 _rk2, uint256 _rk3) public returns (uint256, uint256, bytes memory, uint256)
     {
-        uint256 _c1_y = EllipticCurve.deriveY(0x02, c1, AA, BB, PP);
+        uint256 _c1_y = EllipticCurve.deriveY(p, c1, AA, BB, PP);
         uint256 _c1prime; 
         uint256 _c2prime;
         uint256 _c4prime;
         uint256 __;
-        bytes memory _c3prime;
 
 
         (_c1prime, __) = EllipticCurve.ecMul(_rk1, c1, _c1_y, AA, PP);
@@ -53,21 +53,20 @@ contract PRE
 
         (_c4prime, __) = EllipticCurve.ecMul(_rk3, c1, _c1_y, AA, PP);
 
-        _c3prime = c3;
-
         countingContract.increment(msg.sender);
-        return (_c1prime, _c2prime, _c3prime, _c4prime);
+
+        return (_c1prime, _c2prime, c3, _c4prime);
     }
 }
 
 contract Counter
 {
     address   private owner;
-    address[] private allowedAddresses;  
+    bytes32[] private allowedAddresses;  
     mapping(address => uint) public addressCounts;
     
     // Initialize owner and allowed addresses
-    constructor(address _owner, address[] memory _allowedAddresses)
+    constructor(address _owner, bytes32[] memory _allowedAddresses)
     {
         owner = _owner;
         allowedAddresses = _allowedAddresses;
@@ -76,18 +75,17 @@ contract Counter
     // Modifier to check if caller is allowed
     function allowedSender(address me) internal view returns (bool)
     {
-        bool isAllowed = false;
-
+        bytes32 hash = keccak256(abi.encodePacked(me));
+     
         for (uint i = 0; i < allowedAddresses.length; i++)
         {
-            if (allowedAddresses[i] == me)
+            if (allowedAddresses[i] == hash)
             {
-                isAllowed = true;
-                break;
+                return true;
             }
         }
 
-        return isAllowed;
+        return false;
     }
 
     // Increment the count
