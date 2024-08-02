@@ -229,6 +229,12 @@ class EncryptedCommunication:
 
         return message
     
+def format_c5(c5):
+    hex_str = hex(c5)[2:]
+    if len(hex_str) % 2 != 0:
+        hex_str = '0' + hex_str
+    return '0x' + hex_str
+
 def main():
     ec = EncryptedCommunication()
     message = input("Enter a message to encrypt: ")
@@ -239,9 +245,9 @@ def main():
 
     print("C1:", c1.x())
     print("C2:", c2.x())
-    print("C3:", c3)
+    print("C3:", '"0x' + c3 + '"')
     print("C4:", c4.x())
-    print("C5:", hex(c5))
+    print("C5:", '"' + format_c5(c5) + '"')
 
     print("RK1:", rk1)
     print("RK2:", rk2)
