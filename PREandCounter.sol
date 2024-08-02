@@ -40,20 +40,19 @@ contract PRE
     // Function to re-encrypt the ciphertext with the re-encryption keys
     function ReEncrypt(uint256 _rk1, uint256 _rk2, uint256 _rk3) public returns (uint256, uint256, bytes memory, uint256)
     {
+        countingContract.increment(msg.sender);
+
         uint256 _c1_y = EllipticCurve.deriveY(p, c1, AA, BB, PP);
         uint256 _c1prime; 
         uint256 _c2prime;
         uint256 _c4prime;
         uint256 __;
 
-
         (_c1prime, __) = EllipticCurve.ecMul(_rk1, c1, _c1_y, AA, PP);
 
         (_c2prime, __) = EllipticCurve.ecMul(_rk2, c1, _c1_y, AA, PP);
 
         (_c4prime, __) = EllipticCurve.ecMul(_rk3, c1, _c1_y, AA, PP);
-
-        countingContract.increment(msg.sender);
 
         return (_c1prime, _c2prime, c3, _c4prime);
     }
@@ -67,6 +66,7 @@ contract Counter
     
     // Initialize owner and allowed addresses
     constructor(address _owner, bytes32[] memory _allowedAddresses)
+    //constructor(address _owner)
     {
         owner = _owner;
         allowedAddresses = _allowedAddresses;
@@ -93,7 +93,7 @@ contract Counter
     {
         require(msg.sender == owner, "Error: invalid sender");
         
-        require(allowedSender(user) == true, "Error: invalid sender");
+        require(allowedSender(user) == true, "Error: invalid user");
         
         addressCounts[user]++;
     }
