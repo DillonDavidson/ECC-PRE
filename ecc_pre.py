@@ -6,6 +6,10 @@ import math
 from ecdsa.numbertheory import inverse_mod
 from ecdsa import ellipticcurve, numbertheory
 from eth_hash.auto import keccak
+import binascii
+import gmpy2
+from gmpy2 import mpz
+from sympy import isprime
 
 class EncryptedCommunication:
     def __init__(self):
@@ -29,9 +33,26 @@ class EncryptedCommunication:
         self.l_bits = None
         self.n_bits = None
 
+    def compute_y_squared(self, x, a, b, p):
+        x2 = (x * x) % p
+        x3 = (x2 * x) % p
+        y2 = (x3 + a *  x + b) % p
+        return y2
+
+    def get_prefix(self, x, y, a, b, p):
+        y2_computed = self.compute_y_squared(x, a, b, p)
+        y2 = (y * y) % p
+
+        if y2 == y2_computed:
+            if y % 2 == 0:
+                return 0x02
+            else:
+                return 0x03
+        else:
+            raise ValueError("zzz")
+
     def hash1(self, message, sigma, idA, pkA1, pkA2):
         mega_string = str(message) + str(sigma) + str(idA) + str(pkA1) + str(pkA2)
-        #return int(int(hashlib.sha256(mega_string.encode()).hexdigest(), 16) % self.Q)
         hash_bytes = keccak(mega_string.encode())
         return int.from_bytes(hash_bytes, byteorder='big') % self.Q
     
@@ -43,14 +64,28 @@ class EncryptedCommunication:
         return bin(result)[2:]
 
     def hash3(self, c1, c2, c3, c4):
-        mega_string = str(c1) + str(c2) + str(c3) + str(c4)
-        #return int(int(hashlib.sha256(mega_string.encode()).hexdigest(), 16) % self.Q)
-        hash_bytes = keccak(mega_string.encode())
-        return int.from_bytes(hash_bytes, byteorder='big') % self.Q
+        mega_string = hex(c1)[2:] + hex(c2)[2:] + str(c3) + hex(c4)[2:]
+        mega_bytes = bytes.fromhex(mega_string)
+        hash_bytes = keccak(mega_bytes)
+        
+        hash_int = int.from_bytes(hash_bytes, byteorder='big')
+        hash_mod = hash_int % self.Q
+
+        hash_hex = hex(hash_int)
+        hash_mod_hex = hex(hash_mod)
+
+        # Print results
+        print("mega_string", mega_string)
+        print("in hex", binascii.hexlify(mega_bytes).decode())
+        print("hash3", hash_int)
+        print("hash3 (0x)", hash_hex)
+        print("hash3 (mod % self.Q)", hash_mod)
+        print("hash3 (mod % self.Q) (0x)", hash_mod_hex)
+        
+        return hash_mod
 
     def hash4(self, idA, idB, pkB1x, pkB1y):
         mega_string = str(idA) + str(idB) + str(pkB1x) + str(pkB1y)
-        #return int(hashlib.sha256(mega_string.encode()).hexdigest(), 16) % self.Q
         hash_bytes = keccak(mega_string.encode())
         return int.from_bytes(hash_bytes, byteorder='big') % self.Q
 
@@ -180,7 +215,14 @@ class EncryptedCommunication:
         # Compute points for Re-Encryption check
         c5p = c5 * self.P
         hash3 = self.hash3(c1.x(), c2.x(), c3, c4.x())
-        verification_point = c4 + (hash3 * c2)
+        temp = hash3 * c2
+        print("hashc2_x ", temp.x())
+        print("hashc2_y ", temp.y())
+        # verification_point = c4 + (hash3 * c2)
+        verification_point = c4 + temp
+        print("hash2c4_x", verification_point.x())
+        print("hash2c4_y", verification_point.y())
+
         print("C5P:", c5p.x())
         # C5 * P must equal C4 + H3(C1, C2, C3, C4) * C2
         if c5p.x() != verification_point.x():
@@ -243,10 +285,13 @@ def main():
     print("Decrypted Message:", ec.decrypt(c1, c2, c3, c4, c5))
     rk1, rk2, rk3 = ec.rekeygenerate()
 
-    print("C1:", c1.x())
-    print("C2:", c2.x())
+    print("C1 x:", c1.x())
+    print("C1 y:", c1.y())
+    print("C2 x:", c2.x())
+    print("C2 y:", c2.y())
     print("C3:", '"0x' + c3 + '"')
-    print("C4:", c4.x())
+    print("C4 x:", c4.x())
+    print("C4 y:", c4.y())
     print("C5:", '"' + format_c5(c5) + '"')
 
     print("RK1:", rk1)
@@ -255,12 +300,27 @@ def main():
 
     C1prime, C2prime, C3prime, C4prime = ec.reencrypt(rk1, rk2, rk3, c1, c2, c3, c4, c5)
 
-    print("C1':", C1prime.x())
-    print("C2':", C2prime.x())
+    print("C1' x:", C1prime.x())
+    print("C1' y:", C1prime.y())
+    print("C2' x:", C2prime.x())
+    print("C2' y:", C2prime.y())
     print("C3':", C3prime)
-    print("C4':", C4prime.x())
+    print("C4' x:", C4prime.x())
+    print("C4' y:", C4prime.y())
 
     print("Re-Decrypted Message:", ec.redecrypt(C1prime, C2prime, C3prime, C4prime))
+
+    # Determine the prefix for C1
+    prefix_c1 = ec.get_prefix(c1.x(), c1.y(), 0x0, 0x7, 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F)
+    print("Prefix for c1x =", c1.x(), "is 0x{:02x}".format(prefix_c1))
+    
+    # Determine the prefix for C2
+    prefix_c2 = ec.get_prefix(c2.x(), c2.y(), 0x0, 0x7, 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F)
+    print("Prefix for c2x =", c2.x(), "is 0x{:02x}".format(prefix_c2))
    
+    # Determine the prefix for C4
+    prefix_c4 = ec.get_prefix(c4.x(), c4.y(), 0x0, 0x7, 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F)
+    print("Prefix for c4x =", c4.x(), "is 0x{:02x}".format(prefix_c4))
+
 if __name__ == "__main__":
     main()
