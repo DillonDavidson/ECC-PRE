@@ -287,7 +287,7 @@ def main():
     rk1, rk2, rk3 = ec.rekeygenerate()
 
     print("C1 x:", c1.x())
-    # print("C1 y:", c1.y())
+    print("C1 y:", c1.y())
     print("C2 x:", c2.x())
     print("C2 y:", c2.y())
     print("C3:", '"0x' + c3 + '"')
