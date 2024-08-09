@@ -1,4 +1,4 @@
-        // SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: MIT
 pragma solidity 0.8.22;
 
 import "contracts/EllipticCurve.sol";
@@ -6,96 +6,79 @@ import "contracts/EllipticCurve.sol";
 contract PRE
 {
     // SECP256k1 curve constants
-    uint256 public constant GX = 0x79BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798;
-    uint256 public constant GY = 0x483ADA7726A3C4655DA4FBFC0E1108A8FD17B448A68554199C47D08FFB10D4B8;
-    uint256 public constant AA = 0;
-    uint256 public constant BB = 7;
-    uint256 public constant PP = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F;
-    uint256 public constant NN = 0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141;
+    uint public constant PP = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F;
 
     // Ciphertext values
+
     uint private c1;
+    uint private c1_y;
     uint private c2;
+    uint private c2_y;
     bytes private c3;
     uint private c4;
+    uint private c4_y;
     uint private c5p;
+    uint8 public parity1;
+    uint8 public parity2;
+    uint8 public parity4;
+    uint private hash;
 
     // Address for the counting contract
     address public countingContractAddress;
     Counter public countingContract;
-
-    uint8 private parity1;
-    uint8 private parity2;
-    uint8 private parity4;
-
-    uint256 private hash;
-    uint256 public dumb_c2_y;
-    uint256 public dumb_c4_y;
-    uint256 public hashc2_x;
-    uint256 public hashc2_y;
-    uint256 public hash2c4_x;
-    uint256 public hash2c4_y;
-    uint256 public c2y;
-    uint256 public c4y;
-
-    // Constructor to initialize contract
-    // What if we send _c5P's X
-    constructor(uint _c1_x, uint _c2_x, bytes memory _c3, uint _c4_x, uint _c5_times_p, bytes32[] memory _allowedAddresses, uint _c2_y, uint _c4_y, uint8 pari1, uint8 pari2, uint8 pari4)
+    // Constructor to initialize PRE contract
+    constructor
+    (
+        uint _c1_x,
+        uint _c1_y,
+        uint _c2_x,
+        uint _c2_y,
+        bytes memory _c3,
+        uint _c4_x,
+        uint _c4_y,
+        uint _c5_times_p,
+        bytes32[] memory _allowedAddresses,
+        uint24 parity
+    )
     {
-        c1 = _c1_x;
-        c2 = _c2_x;
-        c3 = _c3;
-        c4 = _c4_x;
-        c5p = _c5_times_p;
-
-        c2y = _c2_y;
-        c4y = _c4_y;
-
-        parity1 = pari1;
-        parity2 = pari2;
-        parity4 = pari4;
+            c1 = _c1_x;
+            c1_y = _c1_y;
+            c2 = _c2_x;
+            c2_y = _c2_y;
+            c3 = _c3;
+            c4 = _c4_x;
+            c4_y = _c4_y;
+            c5p = _c5_times_p;
+            parity1 = uint8(parity >> 16);
+            parity2 = uint8(parity >> 8);
+            parity4 = uint8(parity); 
+            hash = uint256(keccak256(abi.encodePacked(c1, c2, c3, c4))) % PP;
 
         // Concatenate c1, c2, c3, and c4 and hash the result
-        hash = uint256(keccak256(abi.encodePacked(c1, c2, c3, c4))) % PP;
-
         countingContract = new Counter(address(this), _allowedAddresses);
         countingContractAddress = address(countingContract);
     }
 
-    function TEST() public returns(uint256, uint256, uint256, uint256)
+    function ReEncrypt(uint _rk1, uint _rk2, uint _rk3) public returns (uint, uint, bytes memory, uint)
     {
-        dumb_c2_y =  EllipticCurve.deriveY(parity2, c2, AA, BB, PP);
-        dumb_c4_y =  EllipticCurve.deriveY(parity4, c4, AA, BB, PP);
+        uint __;
+        uint _c1prime;
+        uint _c2prime;
+        uint _c4prime;
 
-        (hashc2_x, hashc2_y) = EllipticCurve.ecMul(hash, c2, dumb_c2_y, AA, PP);
-        (hash2c4_x, hash2c4_y) = EllipticCurve.ecAdd(hashc2_x, hashc2_y, c4, dumb_c4_y, AA, PP);
+        (__, _c1prime) = EllipticCurve.ecMul(hash, c2, c2_y, 0, PP);
 
-        return (hashc2_x, hashc2_y, hash2c4_x, hash2c4_y);
-    }
-
-    function ReEncrypt(uint256 _rk1, uint256 _rk2, uint256 _rk3) public returns (uint256, uint256, bytes memory, uint256)
-    {
-        countingContract.increment(msg.sender);
-
-        uint256 __;
-        uint256 _c1prime;
-        uint256 _c2prime;
-        uint256 _c4prime;
-        uint256 _c2_y = EllipticCurve.deriveY(parity2, c2, AA, BB, PP);
-        uint256 _c4_y = EllipticCurve.deriveY(parity4, c4, AA, BB, PP);
-
-        (__, _c1prime) = EllipticCurve.ecMul(hash, c2, _c2_y, AA, PP);
-        (_c4prime, _c2prime) = EllipticCurve.ecAdd(__, _c1prime, c4, _c4_y, AA, PP);
+        (_c4prime, _c2prime) = EllipticCurve.ecAdd(__, _c1prime, c4, c4_y, 0, PP);
         
         require(c5p == _c4prime, "c5P != c4 + h3(c1, c2, c3, c4)c2");
 
-        uint256 _c1_y = EllipticCurve.deriveY(parity1, c1, AA, BB, PP);
+        countingContract.increment(msg.sender);
 
-        (_c1prime, __) = EllipticCurve.ecMul(_rk1, c1, _c1_y, AA, PP);
+        (_c1prime, __) = EllipticCurve.ecMul(_rk1, c1, c1_y, 0, PP);
 
-        (_c2prime, __) = EllipticCurve.ecMul(_rk2, c1, _c1_y, AA, PP);
+        (_c2prime, __) = EllipticCurve.ecMul(_rk2, c1, c1_y, 0, PP);
 
-        (_c4prime, __) = EllipticCurve.ecMul(_rk3, c1, _c1_y, AA, PP);
+        (_c4prime, __) = EllipticCurve.ecMul(_rk3, c1, c1_y, 0, PP);
 
         return (_c1prime, _c2prime, c3, _c4prime);
     }
